@@ -7,17 +7,17 @@ using System.Threading.Tasks;
 
 namespace ITXAsync
 {
-    public partial class CallBackRequest
+    public partial class CallBackRequestWithUri
     {
         [JsonProperty("callBackUri")]
         public Uri CallBackUri { get; set; }
 
-        [JsonProperty("response")]
-        public Response Response { get; set; }
+        [JsonProperty("callBackRequest")]
+        public CallBackRequest CallBackRequest { get; set; }
 
     }
 
-    public partial class Response
+    public partial class CallBackRequest
     {
         [JsonProperty("Output")]
         public MapStatusResponse Output { get; set; }

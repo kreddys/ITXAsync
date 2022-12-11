@@ -20,44 +20,63 @@ namespace ITXAsync
             var statusUrl = await context.CallActivityAsync<string>(nameof(InitiateRequest), mapRequest);
 
             var retryOptions = new RetryOptions(TimeSpan.FromSeconds(mapRequest.RunMap.WaitSeconds), (int)mapRequest.RunMap.MaxRetries);
-            MapStatusResponse response = await context.CallActivityWithRetryAsync<MapStatusResponse>(nameof(FetchResult), retryOptions, statusUrl);
 
-            CallBackRequest callBackReq = BuildCallback(new { response = response, callBackUri = mapRequest.CallBackUri });
+            MapStatusResponse response = new MapStatusResponse();
 
-            await context.CallActivityAsync<string>(nameof(SendCallback), callBackReq);
+            try
+            {
+                response = await context.CallActivityWithRetryAsync<MapStatusResponse>(nameof(FetchResult), retryOptions, statusUrl);
+            }
+            catch (InProgressException ex)
+            {
+                // Ignore
+            }
+            catch (FunctionFailedException ex)
+            {
+                response.Outputs = null;
+                response.Status = 408;
+                response.StatusMessage = "Map Not Completed Within Timeout";
+            }
 
-            return response;
+
+
+            CallBackRequestWithUri callBackReqWithUri = BuildCallback(new { response = response, callBackUri = mapRequest.CallBackUri });
+
+            await context.CallActivityAsync<string>(nameof(SendCallback), callBackReqWithUri);
+
+            return callBackReqWithUri.CallBackRequest;
 
         }
 
         [FunctionName("BuildCallback")]
-        private static CallBackRequest BuildCallback(dynamic mapRequest)
+        private static CallBackRequestWithUri BuildCallback(dynamic data)
         {
-            Response callbackResponse = new Response();
             CallBackRequest cbr = new CallBackRequest();
+            CallBackRequestWithUri cbrwuri = new CallBackRequestWithUri();
 
-            cbr.CallBackUri = mapRequest.callBackUri;
+            cbrwuri.CallBackUri = data.callBackUri;
 
-            if (mapRequest.response.StatusMessage == "Map completed successfully")
+            if (data.response.StatusMessage == "Map completed successfully")
             {
-                callbackResponse.Output = mapRequest.response;
-                cbr.Response = callbackResponse;
+                cbr.Output = data.response;
+                cbr.StatusCode = data.response.Status.ToString();
             }
             else
             {
-                callbackResponse.Output = mapRequest.response;
-                cbr.Response = callbackResponse;
-                cbr.Response.StatusCode = (mapRequest.response.Status + 400).ToString();
+                cbr.Output = data.response;
+                cbr.StatusCode = (data.response.Status + 400).ToString();
 
                 Error err = new Error();
 
-                err.Message = mapRequest.response.StatusMessage;
-                err.ErrorCode = (mapRequest.response.Status).ToString();
+                err.Message = data.response.StatusMessage;
+                err.ErrorCode = (data.response.Status).ToString();
 
-                cbr.Response.Error = err;
+                cbr.Error = err;
             }
 
-            return cbr;
+            cbrwuri.CallBackRequest = cbr; 
+
+            return cbrwuri;
         }
 
         [FunctionName(nameof(InitiateRequest))]
@@ -110,7 +129,8 @@ namespace ITXAsync
 
             if (body?.StatusMessage == "In progress")
             {
-                throw new Exception($"start_timestamp: {body.StartTimestamp}, status_message: {body.StatusMessage}, elapsed_time: {body.ElapsedTime}");
+                log.LogInformation($"start_timestamp: {body.StartTimestamp}, status_message: {body.StatusMessage}, elapsed_time: {body.ElapsedTime}");
+                throw new InProgressException(body.ElapsedTime.ToString());
             }
             else
             {
@@ -120,14 +140,12 @@ namespace ITXAsync
         }
 
         [FunctionName("SendCallback")]
-        public static async Task SendCallback([ActivityTrigger] CallBackRequest callbackReq, ILogger log)
+        public static async Task SendCallback([ActivityTrigger] CallBackRequestWithUri callbackReqWithUri, ILogger log)
         {
 
             var client = new HttpClient();
-            var response = await client.PostAsJsonAsync(callbackReq.CallBackUri, callbackReq.Response);
+            var response = await client.PostAsJsonAsync(callbackReqWithUri.CallBackUri, callbackReqWithUri.CallBackRequest);
             response.EnsureSuccessStatusCode();
-
-            var data = await response.Content.ReadAsStringAsync();
         }
         
         [FunctionName("ItxAsync_HttpStart")]
