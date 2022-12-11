@@ -54,7 +54,7 @@ This function retrieves the result of the request initiated by InitiateRequest b
 The function waits for ```10``` seconds before making the first GET call to statusUrl and it retries for maximum of ```5``` times
 
 ## SendCallback
-This function sends a HTTP POST callback to a specified ```itxUri```. 
+This function sends a HTTP POST callback to a specified ```callBackUri```. 
 
 ### Success
 
