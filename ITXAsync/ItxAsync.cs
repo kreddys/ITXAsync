@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.DurableTask;
@@ -19,7 +22,7 @@ namespace ITXAsync
 
             var statusUrl = await context.CallActivityAsync<string>(nameof(InitiateRequest), mapRequest);
 
-            var retryOptions = new RetryOptions(TimeSpan.FromSeconds(mapRequest.RunMap.WaitSeconds), (int)mapRequest.RunMap.MaxRetries);
+            var retryOptions = new RetryOptions(TimeSpan.FromSeconds(mapRequest.Map.WaitSeconds), (int)mapRequest.Map.MaxRetries);
 
             MapStatusResponse response = new MapStatusResponse();
 
@@ -37,8 +40,6 @@ namespace ITXAsync
                 response.Status = 408;
                 response.StatusMessage = "Map Not Completed Within Timeout";
             }
-
-
 
             CallBackRequestWithUri callBackReqWithUri = BuildCallback(new { response = response, callBackUri = mapRequest.CallBackUri });
 
@@ -64,7 +65,7 @@ namespace ITXAsync
             else
             {
                 cbr.Output = data.response;
-                cbr.StatusCode = (data.response.Status + 400).ToString();
+                cbr.StatusCode = (data.response.Status + 500).ToString();
 
                 Error err = new Error();
 
@@ -83,18 +84,38 @@ namespace ITXAsync
         public static async Task<string> InitiateRequest([ActivityTrigger] MapRequest mapRequest, ILogger log)
         {
             UriBuilder uriBuilder = new UriBuilder(mapRequest.ItxUri);
-            uriBuilder.Path = mapRequest.ItxUri.AbsolutePath + mapRequest.FrameworkMap.Name;
-            uriBuilder.Query = "input="+mapRequest.FrameworkMap.InputCard.ToString()+"&"+"output="+mapRequest.FrameworkMap.OutputCard.ToString();
+            uriBuilder.Path = mapRequest.ItxUri.AbsolutePath + mapRequest.Map.Name;
 
-            if (mapRequest.FrameworkMap.Audit == true && mapRequest.FrameworkMap.Trace == true)
+            List<KeyValuePair<string, string>> queryParams = new List<KeyValuePair<string, string>>();
+
+            foreach (var input in mapRequest.Map.Inputs)
+            {
+                queryParams.Add(new KeyValuePair<string, string>("input", $"{input.CardNumber};{input.Source};{input.File}"));                
+            }
+
+            foreach (var output in mapRequest.Map.Outputs)
+            {
+                queryParams.Add(new KeyValuePair<string, string>("output", $"{output.CardNumber};{output.Source};{output.File}"));
+            }
+
+            foreach (var queryParam in queryParams)
+            {
+                string key = queryParam.Key;
+                string value = queryParam.Value;
+
+                // Append the query parameter to the Uri
+                uriBuilder.Query = $"{uriBuilder.Query}&{key}={value}";
+            }
+
+            if (mapRequest.Map.Audit == true && mapRequest.Map.Trace == true)
             {
                 uriBuilder.Query += "&return=audit,trace";
             }
-            if (mapRequest.FrameworkMap.Audit == true && mapRequest.FrameworkMap.Trace == false)
+            if (mapRequest.Map.Audit == true && mapRequest.Map.Trace == false)
             {
                 uriBuilder.Query += "&return=audit";
             }
-            if (mapRequest.FrameworkMap.Audit == false && mapRequest.FrameworkMap.Trace == true)
+            if (mapRequest.Map.Audit == false && mapRequest.Map.Trace == true)
             {
                 uriBuilder.Query += "&return=trace";
             }
@@ -103,14 +124,16 @@ namespace ITXAsync
 
             log.LogInformation($"Initiating request to {url}");
 
-            using (var client = HttpClientFactory.Create())
-            {
-                var response = await client.PostAsJsonAsync(url, mapRequest.RunMap);
-                response.EnsureSuccessStatusCode();
-                var statusUrl = response.Headers.Location;
-                log.LogInformation($"Status URL: {statusUrl}");
-                return statusUrl.ToString();
-            }
+            HttpClient client = HttpClientFactory.Create();
+            Uri requestUri = new Uri(url.ToString());
+            StringContent requestContent = new StringContent("", Encoding.UTF8);
+            requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            HttpResponseMessage response = await client.PostAsync(requestUri, requestContent);
+            response.EnsureSuccessStatusCode();
+            var statusUrl = response.Headers.Location;
+            log.LogInformation($"Status URL: {statusUrl}");
+
+            return statusUrl.ToString();
         }
 
         //FetchResult

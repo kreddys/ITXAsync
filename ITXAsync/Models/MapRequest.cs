@@ -8,11 +8,8 @@
         [JsonProperty("itxUri")]
         public Uri ItxUri { get; set; }
 
-        [JsonProperty("frameworkMap")]
-        public FrameworkMap FrameworkMap { get; set; }
-
-        [JsonProperty("runMap")]
-        public RunMap RunMap { get; set; }
+        [JsonProperty("map")]
+        public Map Map { get; set; }
 
         [JsonProperty("callBackUri")]
         public Uri CallBackUri { get; set; }
@@ -36,7 +33,7 @@
         public int OutputCard { get; set; }
     }
 
-    public partial class RunMap
+    public partial class Map
     {
         [JsonProperty("name")]
         public string Name { get; set; }
