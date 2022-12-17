@@ -11,8 +11,15 @@ using Microsoft.Extensions.Logging;
 
 namespace ITXAsync
 {
-    public static class ItxAsync
+    public class ItxAsync
     {
+        private readonly HttpClient _httpClient;
+
+        public ItxAsync(IHttpClientFactory httpClientFactory)
+        {
+            this._httpClient = httpClientFactory.CreateClient();
+        }
+
         [FunctionName("ItxAsync")]
         public static async Task<dynamic> RunOrchestrator(
             [OrchestrationTrigger] IDurableOrchestrationContext context, ILogger log)
@@ -41,7 +48,7 @@ namespace ITXAsync
                 response.StatusMessage = "Map Not Completed Within Timeout";
             }
 
-            CallBackRequestWithUri callBackReqWithUri = BuildCallback(new { response = response, callBackUri = mapRequest.CallBackUri });
+            CallBackRequestWithUri callBackReqWithUri = BuildCallback(response, mapRequest.CallBackUri);
 
             await context.CallActivityAsync<string>(nameof(SendCallback), callBackReqWithUri);
 
@@ -50,27 +57,27 @@ namespace ITXAsync
         }
 
         [FunctionName("BuildCallback")]
-        private static CallBackRequestWithUri BuildCallback(dynamic data)
+        private static CallBackRequestWithUri BuildCallback(MapStatusResponse response, Uri callBackUri)
         {
             CallBackRequest cbr = new CallBackRequest();
             CallBackRequestWithUri cbrwuri = new CallBackRequestWithUri();
 
-            cbrwuri.CallBackUri = data.callBackUri;
+            cbrwuri.CallBackUri = callBackUri;
 
-            if (data.response.StatusMessage == "Map completed successfully")
+            if (response.StatusMessage == "Map completed successfully")
             {
-                cbr.Output = data.response;
-                cbr.StatusCode = data.response.Status.ToString();
+                cbr.Output = response;
+                cbr.StatusCode = response.Status.ToString();
             }
             else
             {
-                cbr.Output = data.response;
-                cbr.StatusCode = (data.response.Status + 500).ToString();
+                cbr.Output = response;
+                cbr.StatusCode = (response.Status + 500).ToString();
 
                 Error err = new Error();
 
-                err.Message = data.response.StatusMessage;
-                err.ErrorCode = (data.response.Status).ToString();
+                err.Message = response.StatusMessage;
+                err.ErrorCode = (response.Status).ToString();
 
                 cbr.Error = err;
             }
@@ -81,7 +88,7 @@ namespace ITXAsync
         }
 
         [FunctionName(nameof(InitiateRequest))]
-        public static async Task<string> InitiateRequest([ActivityTrigger] MapRequest mapRequest, ILogger log)
+        public async Task<string> InitiateRequest([ActivityTrigger] MapRequest mapRequest, ILogger log)
         {
             UriBuilder uriBuilder = new UriBuilder(mapRequest.ItxUri);
             uriBuilder.Path = mapRequest.ItxUri.AbsolutePath + mapRequest.Map.Name;
@@ -124,11 +131,10 @@ namespace ITXAsync
 
             log.LogInformation($"Initiating request to {url}");
 
-            HttpClient client = HttpClientFactory.Create();
             Uri requestUri = new Uri(url.ToString());
             StringContent requestContent = new StringContent("", Encoding.UTF8);
             requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-            HttpResponseMessage response = await client.PostAsync(requestUri, requestContent);
+            HttpResponseMessage response = await _httpClient.PostAsync(requestUri, requestContent);
             response.EnsureSuccessStatusCode();
             var statusUrl = response.Headers.Location;
             log.LogInformation($"Status URL: {statusUrl}");
@@ -139,11 +145,9 @@ namespace ITXAsync
         //FetchResult
 
         [FunctionName("FetchResult")]
-        public static async Task<MapStatusResponse> FetchResult([ActivityTrigger] string statusUrl, ILogger log)
+        public async Task<MapStatusResponse> FetchResult([ActivityTrigger] string statusUrl, ILogger log)
         {
-
-            var client = new HttpClient();
-            var response = await client.GetAsync(statusUrl);
+            var response = await _httpClient.GetAsync(statusUrl);
             response.EnsureSuccessStatusCode();
 
             MapStatusResponse body = await response.Content.ReadAsAsync<MapStatusResponse>();
@@ -163,11 +167,10 @@ namespace ITXAsync
         }
 
         [FunctionName("SendCallback")]
-        public static async Task SendCallback([ActivityTrigger] CallBackRequestWithUri callbackReqWithUri, ILogger log)
+        public async Task SendCallback([ActivityTrigger] CallBackRequestWithUri callbackReqWithUri, ILogger log)
         {
 
-            var client = new HttpClient();
-            var response = await client.PostAsJsonAsync(callbackReqWithUri.CallBackUri, callbackReqWithUri.CallBackRequest);
+            var response = await _httpClient.PostAsJsonAsync(callbackReqWithUri.CallBackUri, callbackReqWithUri.CallBackRequest);
             response.EnsureSuccessStatusCode();
         }
         
